@@ -4,17 +4,22 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import de.derioo.annotations.Async;
 import de.derioo.utils.*;
 import lombok.AllArgsConstructor;
 import lombok.SneakyThrows;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
@@ -28,45 +33,55 @@ public class NotionAPI {
     private final String databaseID;
 
     public CompletableFuture<DatabaseItem> addItem(ItemDetail... itemDetails) {
-            return CompletableFuture.supplyAsync(() -> {
-                String url = "https://api.notion.com/v1/pages";
+        return CompletableFuture.supplyAsync(() -> {
+            String url = "https://api.notion.com/v1/pages";
 
-                JsonObject body = new JsonObject();
+            JsonObject body = new JsonObject();
 
-                JsonObject parent = new JsonObject();
+            JsonObject parent = new JsonObject();
 
-                parent.addProperty("type", "database_id");
-                parent.addProperty("database_id", this.databaseID);
-
-
-                JsonObject properties = new JsonObject();
-
-                for (ItemDetail itemDetail : itemDetails) {
-                    properties.add(itemDetail.name(), this.getPropertiesObject(itemDetail.type(), itemDetail.value()));
-                }
+            parent.addProperty("type", "database_id");
+            parent.addProperty("database_id", this.databaseID);
 
 
-                body.add("parent", parent);
-                body.add("properties", properties);
+            JsonObject properties = new JsonObject();
 
-                String authorizationHeader = "Bearer " + this.secret;
+            for (ItemDetail itemDetail : itemDetails) {
+                properties.add(itemDetail.name(), this.getPropertiesObject(itemDetail.type(), itemDetail.value()));
+            }
 
 
-                PostRequest postRequest = new PostRequest(url, body.toString());
-                postRequest.addHeader("Authorization", authorizationHeader);
-                postRequest.addHeader("Content-Type", "application/json");
-                postRequest.addHeader("Notion-Version", NOTION_VERSION);
+            body.add("parent", parent);
+            body.add("properties", properties);
 
-                String response = postRequest.execute(this.secret);
+            String authorizationHeader = "Bearer " + this.secret;
 
-                return new DatabaseItem(JsonParser.parseString(response).getAsJsonObject());
-            });
 
+
+            PostRequest postRequest = new PostRequest(url, body.toString());
+            postRequest.addHeader("Authorization", authorizationHeader);
+            postRequest.addHeader("Content-Type", "application/json");
+            postRequest.addHeader("Notion-Version", NOTION_VERSION);
+
+            String response = postRequest.execute(this.secret);
+
+
+            return new DatabaseItem(JsonParser.parseString(response).getAsJsonObject());
+        });
+
+    }
+
+    public static JsonObject getDetails(String databaseID, String secret) {
+        GetRequest request = new GetRequest("https://api.notion.com/v1/databases/" + databaseID);
+
+        request.addHeader("Notion-version", NOTION_VERSION);
+
+        return JsonParser.parseString(request.execute(secret)).getAsJsonObject();
     }
 
     public CompletableFuture<List<DatabaseItem>> getItemsfromDB() {
         return CompletableFuture.supplyAsync(() -> {
-            String url = "https://api.notion.com/v1/databases/"+ this.databaseID+"/query";
+            String url = "https://api.notion.com/v1/databases/" + this.databaseID + "/query";
 
             PostRequest request = new PostRequest(url, "");
 
@@ -94,7 +109,6 @@ public class NotionAPI {
             requestBody.add("properties", properties);
 
 
-
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create("https://api.notion.com/v1/pages/" + item.getUuid()))
                     .method("PATCH", HttpRequest.BodyPublishers.ofString(requestBody.toString()))
@@ -110,7 +124,8 @@ public class NotionAPI {
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
 
-                return this.getItemsfromDB().get().stream().filter(i -> i.getUuid().equals(item.getUuid())).findFirst().get();
+                Optional<DatabaseItem> first = this.getItemsfromDB().get().stream().filter(i -> i.getUuid().equals(item.getUuid())).findFirst();
+                return first.orElse(null);
             } catch (IOException | InterruptedException | ExecutionException e) {
                 throw new RuntimeException(e);
             }
@@ -127,7 +142,7 @@ public class NotionAPI {
 
     public CompletableFuture<DatabaseItem> deleteItem(@NotNull DatabaseItem item) {
         return CompletableFuture.supplyAsync(() -> {
-            DeleteRequest request = new DeleteRequest("https://api.notion.com/v1/blocks/"+ item.getUuid(), "");
+            DeleteRequest request = new DeleteRequest("https://api.notion.com/v1/blocks/" + item.getUuid(), "");
             request.addHeaders("Notion-version", NOTION_VERSION);
             return new DatabaseItem(JsonParser.parseString(request.execute(this.secret)).getAsJsonObject());
         });
@@ -160,14 +175,12 @@ public class NotionAPI {
                 dateObject.addProperty("start", value.toString());
 
 
-
                 return object;
             case RICH_TEXT:
                 innerObject = new JsonObject();
                 JsonArray array = new JsonArray();
                 JsonObject contentObject = new JsonObject();
                 JsonObject textObject = new JsonObject();
-
 
 
                 innerObject.addProperty("type", type.getType());
@@ -200,10 +213,43 @@ public class NotionAPI {
 
 
                 return object;
+            case STATUS:
+                innerObject = new JsonObject();
+                JsonObject status = new JsonObject();
+
+                innerObject.addProperty("type", type.getType());
+                innerObject.add(type.getType(), status);
+
+                status.addProperty("name", value.toString());
+
+                return innerObject;
+
         }
         return new JsonObject();
     }
 
 
+    public void execute(String methodName, Object o) {
+        Optional<Method> first = Arrays.stream(o.getClass().getDeclaredMethods()).filter(method -> method.getName().equals(methodName)).findFirst();
+        if (first.isEmpty()) return;
 
+
+        Method method = first.get();
+
+        if (method.isAnnotationPresent(Async.class)) {
+            new Thread(() -> invoke(method, o)).start();
+            return;
+        }
+        invoke(method, o);
+
+
+    }
+
+    public void invoke(Method method, Object o, Object... args) {
+        try {
+            method.invoke(o, args);
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }

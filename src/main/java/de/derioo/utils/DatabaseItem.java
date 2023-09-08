@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import de.derioo.PropertiesType;
+import de.derioo.objects.CustomObject;
 import lombok.Data;
 import org.jetbrains.annotations.NotNull;
 
@@ -38,28 +39,32 @@ public class DatabaseItem {
     public List<ItemDetail> getDetails() {
         return this.details;
     }
+
     public ItemDetail getDetail(String key) {
         Optional<ItemDetail> first = this.details.stream().filter(detail -> detail.name().equals(key)).findFirst();
         return first.orElse(null);
     }
 
-    private Object getValueFromElement(JsonElement element, PropertiesType type) {
-        if (element.getAsJsonObject().get(type.getType()).isJsonNull())return null;
+    private CustomObject getValueFromElement(JsonElement element, PropertiesType type) {
+        if (element.getAsJsonObject().get(type.getType()).isJsonNull()) return null;
 
         switch (type) {
             case NUMBER -> {
-                return element.getAsDouble();
+                return CustomObject.of(element.getAsDouble());
+            }
+            case STATUS -> {
+                return CustomObject.of(element.getAsJsonObject().get(type.getType()).getAsJsonObject().get("name").getAsString());
             }
             case DATE -> {
-                return element.getAsJsonObject().get(type.getType()).getAsJsonObject().get("start").getAsString();
+                return CustomObject.of(element.getAsJsonObject().get(type.getType()).getAsJsonObject().get("start").getAsString());
             }
             case RICH_TEXT, TITLE -> {
                 JsonArray array = element.getAsJsonObject().get(type.getType()).getAsJsonArray();
-                if (array.asList().size() == 0)return null;
-                return array.get(0).getAsJsonObject().get("text").getAsJsonObject().get("content").getAsString();
+                if (array.asList().size() == 0) return null;
+                return CustomObject.of(array.get(0).getAsJsonObject().get("text").getAsJsonObject().get("content").getAsString());
             }
             case CHECKBOX -> {
-                return element.getAsJsonObject().get(type.getType()).getAsBoolean();
+                return CustomObject.of(element.getAsJsonObject().get(type.getType()).getAsBoolean());
             }
         }
 

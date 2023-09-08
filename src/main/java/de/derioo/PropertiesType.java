@@ -10,6 +10,8 @@ public enum PropertiesType {
 
     TITLE("title"),
 
+    STATUS("status"),
+
     RICH_TEXT("rich_text");
 
     @Getter
