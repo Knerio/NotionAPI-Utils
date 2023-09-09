@@ -1,0 +1,9 @@
+{
+    "notion": {
+        "Internal-Integration-Secret": "some-secret from notion",
+        "database-ids": [
+            "some-id",
+            "another-id"
+        ]
+    }
+}
