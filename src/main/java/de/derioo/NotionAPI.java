@@ -245,9 +245,9 @@ public class NotionAPI {
 
     }
 
-    public void invoke(Method method, Object o, Object... args) {
+    public Object invoke(Method method, Object o, Object... args) {
         try {
-            method.invoke(o, args);
+          return method.invoke(o, args);
         } catch (IllegalAccessException | InvocationTargetException e) {
             throw new RuntimeException(e);
         }

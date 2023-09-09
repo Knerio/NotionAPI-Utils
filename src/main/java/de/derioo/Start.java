@@ -2,10 +2,12 @@ package de.derioo;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import de.derioo.annotations.Async;
 import de.derioo.annotations.CanBeExecutedFromConsole;
 import de.derioo.utils.Config;
 import de.derioo.utils.DatabaseItem;
+import de.derioo.utils.GetRequest;
 import de.derioo.utils.ItemDetail;
 import org.jetbrains.annotations.NotNull;
 
@@ -14,9 +16,16 @@ import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
+import org.jline.reader.LineReader;
+import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.UserInterruptException;
+
 public class Start {
+
+    private final String[] commands = new String[] {"execute {method}"};
 
 
     private String notionToken;
@@ -26,10 +35,14 @@ public class Start {
 
 
     private JsonObject config;
+    
+    private final LineReader reader = LineReaderBuilder.builder().build();
 
     private final Scanner scanner = new Scanner(System.in);
 
     public void start() {
+        this.reader.setAutosuggestion(LineReader.SuggestionType.HISTORY);
+        
         this.config = new Config(new File(".", "config.json")).getContent();
         this.notionToken = this.config.get("notion").getAsJsonObject().get("Internal-Integration-Secret").getAsString();
 
@@ -39,10 +52,11 @@ public class Start {
 
         this.notionAPI.execute("checkForDelete", this);
 
-        System.out.print("> ");
+        
+
 
         while (true) {
-            String command = scanner.nextLine();
+            String command = this.reader.readLine("> ");
 
             if (command.startsWith("execute ")) {
                 String[] commandArgsSplit = command.replace("execute ", "").split("-");
@@ -66,20 +80,29 @@ public class Start {
                 String[] args = new String[annotation.argsLenght()];
 
                 for (int i = 0; i < annotation.argsLenght(); i++) {
-                    System.out.println("Please add one argument and press enter (Argument name = '" + annotation.argsName().split(" ")[i] + "'):");
+                    System.out.println("Please add one argument and press enter (Argument name = '" + annotation.argsName().split(" ")[i].replace("-", " ") + "'):");
                     System.out.print("> ");
-                    args[i] = scanner.nextLine();
+                    args[i] = this.scanner.nextLine();
                     int argsLeft = annotation.argsLenght() - (i + 1);
                     if (argsLeft != 0) System.out.println("You need " + argsLeft + " more");
                 }
-                System.out.println("Success");
+
                 if (optionalMethod.get().isAnnotationPresent(Async.class)) {
-                    new Thread(() -> this.notionAPI.invoke(optionalMethod.get(), this, (Object) args)).start();
+                    new Thread(() -> {
+                        System.out.println(this.notionAPI.invoke(optionalMethod.get(), this, (Object) args));
+                        System.out.print("> ");
+                    }).start();
                 } else {
-                    this.notionAPI.invoke(optionalMethod.get(), this, (Object) args);
+                    System.out.println(this.notionAPI.invoke(optionalMethod.get(), this, (Object) args));
                 }
+            } else {
+                System.out.println("Please use one of the following commands:");
+                System.out.println();
+                for (String s : this.commands) {
+                    System.out.println("- " + s);
+                }
+                System.out.println();
             }
-            System.out.print("> ");
         }
 
     }
@@ -100,10 +123,9 @@ public class Start {
 
         System.out.println("Wich database do you want?");
 
-        System.out.print("> ");
 
         while (true) {
-            String nextLine = scanner.nextLine();
+            String nextLine = this.reader.readLine("> ");
             Optional<String> first = names.keySet().stream().filter(s -> s.equalsIgnoreCase(nextLine)).findFirst();
             if (first.isPresent()) {
                 System.out.println("Picked: " + names.get(first.get()) + " (" + first.get() + ")");
@@ -126,21 +148,29 @@ public class Start {
         return currentDate.format(formatter);
     }
 
-    @CanBeExecutedFromConsole(argsLenght = 2, argsName = "Name Descrption")
+    @CanBeExecutedFromConsole(argsLenght = 3, argsName = "Name Descrption Status-(Leave-blank-for-default)")
     @Async
     public String addObject(String[] args) {
-        if (args.length == 0) {
-            return "Not enough args";
-        }
-
-
+        if (!statusExists(args[2]) && !Objects.equals(args[2], "")) return "Status '"+args[2]+"' doesnt exists";
         try {
-            this.notionAPI.addItem(ItemDetail.of("Name", PropertiesType.TITLE, args[0]), ItemDetail.of("Status", PropertiesType.STATUS, "Not started"), ItemDetail.of("Descrption", PropertiesType.RICH_TEXT, args[1])).get();
+            this.notionAPI.addItem(ItemDetail.of("Name", PropertiesType.TITLE, args[0]), ItemDetail.of("Status", PropertiesType.STATUS, "Not started"), ItemDetail.of("Descrption", PropertiesType.RICH_TEXT, args[1]), ItemDetail.of("Status", PropertiesType.STATUS, args[2].equals("") ? "Not started" : args[2])).get();
         } catch (InterruptedException | ExecutionException e) {
             System.out.println(e.getMessage());
         }
 
         return "executed";
+    }
+
+    private boolean statusExists(String arg) {
+        GetRequest request = new GetRequest("https://api.notion.com/v1/databases/"+this.databaseID);
+
+        request.addHeader("Notion-version", NotionAPI.NOTION_VERSION);
+
+        for (JsonElement element : JsonParser.parseString(request.execute(this.notionToken)).getAsJsonObject().get("properties").getAsJsonObject().get("Status").getAsJsonObject().get("status").getAsJsonObject().get("options")
+                .getAsJsonArray()) {
+            if (element.getAsJsonObject().get("name").getAsString().equals(arg)) return true;
+        }
+        return false;
     }
 
 
@@ -179,6 +209,8 @@ public class Start {
                             while (seconds != 1) {
                                 Thread.sleep(500);
 
+                                if (currentItem == null) break;
+
                                 currentItem = this.notionAPI.modifyItem(currentItem,
                                         ItemDetail.of("Deletion",
                                                 PropertiesType.RICH_TEXT,
@@ -204,7 +236,7 @@ public class Start {
 
                                 seconds--;
                             }
-
+                            if (currentItem == null) return;
                             skips.remove(currentItem.getUuid());
 
                             if (currentItem.getDetail("Status").value().toString().equals("Delete")) {
