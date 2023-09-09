@@ -16,6 +16,9 @@ repositories {
 }
 
 dependencies {
+    implementation 'jline:jline:2.14.6'
+    implementation 'org.jline:jline-terminal:3.16.0'
+    implementation 'org.jline:jline:3.16.0'
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'org.jetbrains:annotations:24.0.0'
 
